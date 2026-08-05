@@ -3,11 +3,11 @@ name: Tokyo Visa Monitor
 on:
   workflow_dispatch:
   schedule:
-    # 毎時0分：確認＋1時間ごとのDiscord稼働通知
-    - cron: "0 * * * *"
-    # それ以外：5分ごとに確認
-    - cron: "5,10,15,20,25,30,35,40,45,50,55 * * * *"
+    # 毎時3分：稼働通知あり
+    - cron: "3 * * * *"
 
+    # それ以外は約5分間隔
+    - cron: "8,13,18,23,28,33,38,43,48,53,58 * * * *"
 permissions:
   contents: write
 
