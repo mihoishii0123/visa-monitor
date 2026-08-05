@@ -12,7 +12,9 @@ from playwright.sync_api import sync_playwright
 URL = "https://digital.diplo.de/arbeitsaufnahme-akademiker"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 SCHEDULE = os.environ.get("GITHUB_EVENT_SCHEDULE", "")
-IS_HOURLY_RUN = SCHEDULE.strip() == "0 * * * *"
+
+# 手動実行時（空文字）または毎時0分の実行時に、1時間ごとの稼働通知を送る
+IS_HOURLY_RUN = SCHEDULE.strip() in ("", "0 * * * *")
 
 STATE_FILE = Path("state.json")
 LOG_FILE = Path("monitor.log")
@@ -38,9 +40,10 @@ def log(message: str) -> None:
 def send_discord(message: str) -> None:
     if not WEBHOOK_URL:
         raise RuntimeError("DISCORD_WEBHOOK_URL が設定されていません。")
+
     response = requests.post(
         WEBHOOK_URL,
-        json={"content": message},
+        json={"content": message[:1900]},
         timeout=20,
     )
     response.raise_for_status()
@@ -49,6 +52,7 @@ def send_discord(message: str) -> None:
 def load_previous_status() -> str:
     if not STATE_FILE.exists():
         return "UNKNOWN"
+
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         return str(data.get("status", "UNKNOWN"))
@@ -59,7 +63,7 @@ def load_previous_status() -> str:
 def save_status(status: str, detail: str) -> None:
     data = {
         "status": status,
-        "detail": detail,
+        "detail": detail[:1000],
         "checked_at_jst": now_jst().isoformat(),
     }
     STATE_FILE.write_text(
@@ -69,36 +73,32 @@ def save_status(status: str, detail: str) -> None:
 
 
 def select_japan(page) -> None:
-    # Native <select> の場合
-    comboboxes = page.get_by_role("combobox")
-    if comboboxes.count() > 0:
-        box = comboboxes.first
-        try:
-            box.select_option(label="Japan")
-            return
-        except Exception:
-            try:
-                box.click()
-                page.get_by_text("Japan", exact=True).last.click()
-                return
-            except Exception:
-                pass
+    country_input = page.locator(
+        'input[placeholder*="Select country"], '
+        'input[name="In which country are you resident?"]'
+    ).first
 
-    # カスタムドロップダウンの場合
-    candidates = [
-        page.get_by_text("Select country", exact=False),
-        page.get_by_text("In which country are you resident?", exact=False),
-    ]
-    for candidate in candidates:
-        if candidate.count() > 0:
-            candidate.last.click()
-            page.wait_for_timeout(500)
-            japan = page.get_by_text("Japan", exact=True)
-            if japan.count() > 0:
-                japan.last.click()
-                return
+    country_input.wait_for(state="visible", timeout=30_000)
 
-    raise RuntimeError("国選択欄で Japan を選択できませんでした。")
+    # クリックではなくキーボードで選択し、
+    # 画面上の別要素にクリックを邪魔される問題を避ける
+    country_input.focus()
+    country_input.fill("Japan")
+    page.wait_for_timeout(1500)
+    country_input.press("ArrowDown")
+    page.wait_for_timeout(300)
+    country_input.press("Enter")
+    page.wait_for_timeout(2500)
+
+    if "Japan" not in country_input.input_value():
+        page.get_by_text("Japan", exact=True).last.click(
+            force=True,
+            timeout=10_000,
+        )
+        page.wait_for_timeout(2000)
+
+    if "Japan" not in country_input.input_value():
+        raise RuntimeError("国選択欄でJapanを選択できませんでした。")
 
 
 def inspect_tokyo() -> tuple[str, str]:
@@ -108,24 +108,33 @@ def inspect_tokyo() -> tuple[str, str]:
             viewport={"width": 1440, "height": 1200},
             locale="en-US",
         )
+
         try:
             page.goto(URL, wait_until="domcontentloaded", timeout=90_000)
-            page.wait_for_timeout(3_000)
-            select_japan(page)
-            page.wait_for_timeout(3_000)
+            page.wait_for_timeout(3000)
 
+            select_japan(page)
+
+            page.wait_for_timeout(3000)
             body_text = page.locator("body").inner_text(timeout=30_000)
             page.screenshot(path=str(SCREENSHOT_FILE), full_page=True)
 
             normalized = " ".join(body_text.split())
 
             if "Tokyo" not in normalized:
-                return "ERROR", "ページ内に Tokyo が見つかりませんでした。"
+                return "ERROR", "ページ内にTokyoが見つかりませんでした。"
 
             if any(text in normalized for text in UNAVAILABLE_TEXTS):
-                return "NOT_AVAILABLE", "Tokyo: Online application currently not available"
+                return (
+                    "NOT_AVAILABLE",
+                    "Tokyo: Online application currently not available",
+                )
 
-            return "AVAILABLE", "Tokyo の利用不可表示が消えています。申請ページをすぐ確認してください。"
+            return (
+                "AVAILABLE",
+                "Tokyoの利用不可表示が消えています。申請ページをすぐ確認してください。",
+            )
+
         finally:
             browser.close()
 
@@ -152,6 +161,7 @@ def main() -> int:
                 "AVAILABLE": "🟢",
                 "ERROR": "🔴",
             }.get(status, "⚪")
+
             send_discord(
                 f"{icon} **Visa Monitor 稼働中**\n"
                 f"Tokyo：{status}\n"
@@ -179,7 +189,7 @@ def main() -> int:
     try:
         send_discord(
             "⚠️ **Visa Monitorでエラーが発生しました**\n"
-            f"{message}\n"
+            f"{message[:1500]}\n"
             f"確認時刻：{now_jst():%Y-%m-%d %H:%M JST}"
         )
     except Exception as notify_error:
