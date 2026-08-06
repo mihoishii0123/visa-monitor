@@ -1,5 +1,5 @@
 {
-  "status": "NOT_AVAILABLE",
-  "detail": "Tokyo: Online application currently not available",
-  "checked_at_jst": "2026-08-06T08:32:18.298355+09:00"
+  "status": "ERROR",
+  "detail": "ページ読み込みがタイムアウトしました：Locator.wait_for: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"input[placeholder*=\\\"Select country\\\"], input[name=\\\"In which country are you resident?\\\"]\").first to be visible\n",
+  "checked_at_jst": "2026-08-06T17:03:17.299959+09:00"
 }
